@@ -227,7 +227,7 @@ function summary() {
     await A.getByRole('dialog').getByRole('button', { name: 'Создать ссылку' }).click();
     const url = await A.getByLabel('Ссылка-приглашение').inputValue();
     const path = new URL(url).pathname;
-    await A.getByRole('dialog').getByRole('button', { name: 'Закрыть' }).click();
+    await A.getByRole('dialog').getByRole('button', { name: 'Закрыть' }).last().click();
     const C = await newUser('guest');
     await C.goto(BASE + path);
     await C.getByLabel('Имя и фамилия').fill('Денис Громов');
