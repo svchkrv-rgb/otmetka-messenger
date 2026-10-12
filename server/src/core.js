@@ -62,6 +62,8 @@ export function visibleSince(chat, member) {
 
 // ---------- Присутствие ----------
 export const sockets = new Map(); // userId -> Set<ws>
+/** Идущие созвоны: callId -> { participants: Set<userId>, ringing: Set<userId> } */
+export const liveCalls = new Map();
 export const isOnline = (uid) => (sockets.get(uid)?.size ?? 0) > 0;
 
 export function userDto(u) {
@@ -138,7 +140,15 @@ export function chatDto(chatId, viewerId) {
     lastMessage: last ? messageDto(last, viewerId, c) : null,
     unread: stmt.unread.get(chatId, since, viewerId, viewerId).c,
     mentionUnread: stmt.mentionUnread.get(chatId, viewerId, viewerId, viewerId).c,
-    call: call ? { id: call.id, video: !!call.video, startedAt: call.started_at, startedBy: call.started_by } : null,
+    call: call ? callDto(call) : null,
+  };
+}
+
+export function callDto(call) {
+  const live = liveCalls.get(call.id);
+  return {
+    id: call.id, chatId: call.chat_id, video: !!call.video, startedAt: call.started_at, startedBy: call.started_by,
+    participants: live ? [...live.participants] : [], ringing: live ? [...live.ringing] : [],
   };
 }
 

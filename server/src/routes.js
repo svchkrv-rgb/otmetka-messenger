@@ -12,7 +12,7 @@ import {
   sendToUser, broadcastMessage, broadcastUpdate, broadcastChat, broadcastUser, addSystemMessage, insertMessage, markRead,
   requireMember, requireManager, requireGroup, canAddMembers, canSeeUser, canSeeReceipts, removeFiles,
 } from './core.js';
-import { UPLOAD_DIR, AVATAR_DIR, MAX_UPLOAD_MB, ICE_SERVERS, LIVEKIT_URL } from './config.js';
+import { UPLOAD_DIR, AVATAR_DIR, MAX_UPLOAD_MB, ICE_SERVERS, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET } from './config.js';
 import { findOrCreateDirect } from './directs.js';
 
 export const router = express.Router();
@@ -145,7 +145,7 @@ function sendNow(chatId, sender, p) {
 
 // ================= Сервисное =================
 router.get('/health', (req, res) => res.json({ ok: true, name: 'otmetka', version: 2 }));
-router.get('/config', (req, res) => res.json({ iceServers: ICE_SERVERS, groupCalls: !!LIVEKIT_URL, maxUploadMb: MAX_UPLOAD_MB }));
+router.get('/config', (req, res) => res.json({ iceServers: ICE_SERVERS, groupCalls: !!(LIVEKIT_URL && LIVEKIT_API_KEY && LIVEKIT_API_SECRET), maxUploadMb: MAX_UPLOAD_MB }));
 
 router.post('/login', wrap((req, res) => {
   const { login, password } = req.body || {};
