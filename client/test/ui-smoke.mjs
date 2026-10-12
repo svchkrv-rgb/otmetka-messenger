@@ -79,7 +79,7 @@ function summary() {
     await A.getByLabel('Название группы').fill(groupTitle);
     await A.getByRole('checkbox').first().waitFor();
     await A.locator('.picker-row', { hasText: 'Ольга Ким' }).locator('input').check();
-    await A.getByRole('button', { name: /Создать группу/ }).click();
+    await A.getByRole('dialog').getByRole('button', { name: /Создать группу/ }).click();
     await A.getByRole('heading', { name: groupTitle }).waitFor({ timeout: 8000 });
   });
 
