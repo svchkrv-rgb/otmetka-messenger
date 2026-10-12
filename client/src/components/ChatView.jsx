@@ -34,7 +34,9 @@ export default function ChatView({ chatId }) {
 
   useEffect(() => {
     const t = setInterval(() => tick((x) => x + 1), 1500);
-    return () => clearInterval(t);
+    const onSearch = () => setSearch(true);
+    window.addEventListener('otmetka:search', onSearch);
+    return () => { clearInterval(t); window.removeEventListener('otmetka:search', onSearch); };
   }, []);
 
   // при переходе к сообщению не прилипать к низу

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore, closeModal, request, setState, toast, getState, createPoll, createTask, sendLocation, sendContact } from '../store.js';
+import { useStore, closeModal, request, setState, toast, getState, createPoll, createTask, sendLocation, sendContact, avatarUrl } from '../store.js';
 import { GROUP_COLORS, initials, formatDuration } from '../utils.js';
 import { UserAvatar } from './Avatar.jsx';
 import Icon from './Icon.jsx';
@@ -20,6 +20,8 @@ export default function Modals() {
     'user-new': UserDialog,
     'user-edit': UserDialog,
     image: ImageViewer,
+    invite: InviteDialog,
+    profile: ProfileDialog,
     poll: PollDialog,
     task: TaskDialog,
     camera: CameraDialog,
@@ -56,31 +58,86 @@ function Switch({ checked, onChange, label, hint }) {
   );
 }
 
-export function MemberPicker({ selected, setSelected, exclude = [] }) {
+export function MemberPicker({ selected, setSelected, exclude = [], roles, setRoles }) {
   const s = useStore();
   const [q, setQ] = useState('');
-  const list = useMemo(() => Object.values(s.users)
-    .filter((u) => u.isActive && u.id !== s.me.id && !exclude.includes(u.id))
-    .filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()) || (u.position || '').toLowerCase().includes(q.toLowerCase()))
-    .sort((a, b) => a.name.localeCompare(b.name, 'ru')), [s.users, q, exclude, s.me.id]);
+  const candidates = useMemo(() => Object.values(s.users)
+    .filter((u) => u.isActive && u.id !== s.me.id && !exclude.includes(u.id)), [s.users, exclude, s.me.id]);
+  const list = useMemo(() => candidates
+    .filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()) || (u.position || '').toLowerCase().includes(q.toLowerCase()) || (u.department || '').toLowerCase().includes(q.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru')), [candidates, q]);
+  const departments = useMemo(() => {
+    const map = new Map();
+    for (const u of candidates) if (u.department) map.set(u.department, [...(map.get(u.department) || []), u.id]);
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0], 'ru'));
+  }, [candidates]);
   const toggle = (id) => setSelected(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+  const addDept = (ids) => setSelected([...new Set([...selected, ...ids])]);
   return (
     <div className="picker">
       <label className="search">
         <Icon name="search" size={18} />
-        <input type="search" aria-label="Поиск сотрудника" placeholder="Имя или должность" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input type="search" aria-label="Поиск сотрудника" placeholder="Имя, должность или отдел" value={q} onChange={(e) => setQ(e.target.value)} />
       </label>
+      {departments.length > 0 && (
+        <div className="dept-chips">
+          {departments.map(([name, ids]) => {
+            const all = ids.every((id) => selected.includes(id));
+            return (
+              <button key={name} type="button" className={'chip chip-line' + (all ? ' chip-active' : '')} onClick={() => (all ? setSelected(selected.filter((id) => !ids.includes(id))) : addDept(ids))}>
+                {all ? '✓ ' : '+ '}Весь отдел {name} · {ids.length}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="picker-list">
-        {list.length ? list.map((u) => (
-          <label key={u.id} className="picker-row">
-            <input type="checkbox" checked={selected.includes(u.id)} onChange={() => toggle(u.id)} />
-            <UserAvatar user={u} size={34} showOnline />
-            <span className="picker-name"><span>{u.name}</span><small>{u.position}</small></span>
-          </label>
-        )) : <div className="picker-empty">{q ? 'Никого не нашли' : 'Нет сотрудников для добавления. Администратор может добавить их в разделе «Сотрудники».'}</div>}
+        {list.length ? list.map((u) => {
+          const on = selected.includes(u.id);
+          return (
+            <div key={u.id} className={'picker-row' + (on ? ' picker-row-on' : '')}>
+              <label className="picker-main">
+                <input type="checkbox" checked={on} onChange={() => toggle(u.id)} />
+                <UserAvatar user={u} size={34} showOnline />
+                <span className="picker-name">
+                  <span>{u.name}{u.isGuest && <span className="tag tag-guest">внешний</span>}</span>
+                  <small>{[u.department, u.position].filter(Boolean).join(' · ')}</small>
+                </span>
+              </label>
+              {on && roles && (
+                <select className="role-select" aria-label={`Роль: ${u.name}`} value={u.isGuest ? 'guest' : (roles[u.id] || 'member')} disabled={u.isGuest}
+                  onChange={(e) => setRoles({ ...roles, [u.id]: e.target.value })}>
+                  <option value="admin">Администратор</option>
+                  <option value="member">Участник</option>
+                  <option value="guest">Гость</option>
+                </select>
+              )}
+            </div>
+          );
+        }) : <div className="picker-empty">{q ? 'Никого не нашли' : 'Нет сотрудников для добавления. Администратор может добавить их в разделе «Сотрудники».'}</div>}
       </div>
     </div>
   );
+}
+
+function AvatarPicker({ src, onFile, onRemove, children }) {
+  const ref = useRef(null);
+  return (
+    <div className="avatar-picker">
+      <button type="button" className="avatar-picker-btn" onClick={() => ref.current?.click()} aria-label="Выбрать фото">
+        {children}
+        <span className="avatar-picker-overlay"><Icon name="camera" size={20} /></span>
+      </button>
+      <input ref={ref} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ''; }} />
+      {src && onRemove && <button type="button" className="link-btn" onClick={onRemove}>Убрать фото</button>}
+    </div>
+  );
+}
+
+async function uploadAvatar(path, file) {
+  const fd = new FormData();
+  if (file) fd.append('avatar', file); else fd.append('remove', 'true');
+  return request('POST', path, fd);
 }
 
 function GroupDialog({ type, chatId }) {
@@ -90,8 +147,14 @@ function GroupDialog({ type, chatId }) {
   const [title, setTitle] = useState(chat?.title || '');
   const [address, setAddress] = useState(chat?.address || '');
   const [color, setColor] = useState(chat?.color || GROUP_COLORS[0]);
+  const [photo, setPhoto] = useState(null);
+  const photoUrl = useMemo(() => (photo ? URL.createObjectURL(photo) : null), [photo]);
   const [showReceipts, setShowReceipts] = useState(chat ? chat.showReceipts : true);
+  const [historyForNew, setHistoryForNew] = useState(chat ? chat.historyForNew : true);
+  const [onlyAdminsAdd, setOnlyAdminsAdd] = useState(chat ? !chat.membersCanAdd : true);
+  const [guestDownload, setGuestDownload] = useState(chat ? chat.guestDownload : false);
   const [members, setMembers] = useState([]);
+  const [roles, setRoles] = useState({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -100,23 +163,29 @@ function GroupDialog({ type, chatId }) {
     if (!title.trim()) { setError('Укажите название группы'); return; }
     setBusy(true);
     setError('');
+    const rules = { showReceipts, historyForNew, membersCanAdd: !onlyAdminsAdd, guestDownload };
     try {
+      let result;
       if (edit) {
-        const updated = await request('PATCH', `/api/chats/${chatId}`, { title, address, color, showReceipts });
-        setState((st) => ({ chats: { ...st.chats, [updated.id]: updated } }));
+        result = await request('PATCH', `/api/chats/${chatId}`, { title, address, color, ...rules });
       } else {
-        const created = await request('POST', '/api/chats/group', { title, address, color, showReceipts, memberIds: members });
-        setState((st) => ({ chats: { ...st.chats, [created.id]: created }, activeChatId: created.id, view: 'chats', infoOpen: false }));
+        result = await request('POST', '/api/chats/group', { title, address, color, ...rules, members: members.map((id) => ({ userId: id, role: roles[id] || 'member' })) });
       }
+      if (photo) result = await uploadAvatar(`/api/chats/${result.id}/avatar`, photo);
+      setState((st) => ({ chats: { ...st.chats, [result.id]: result }, ...(edit ? {} : { activeChatId: result.id, view: 'chats', infoOpen: false }) }));
       closeModal();
     } catch (err) {
       setError(err.message);
       setBusy(false);
     }
   }
+  async function removePhoto() {
+    try { const r = await uploadAvatar(`/api/chats/${chatId}/avatar`, null); setState((st) => ({ chats: { ...st.chats, [r.id]: r } })); } catch (err) { setError(err.message); }
+  }
 
+  const shownAvatar = photoUrl || avatarUrl(chat?.avatar);
   return (
-    <Dialog title={edit ? 'Настройки группы' : 'Новая группа объекта'} width={620}
+    <Dialog title={edit ? 'Настройки группы' : 'Новая группа объекта'} width={680}
       footer={<>
         <button className="btn btn-soft" onClick={closeModal}>Отмена</button>
         <button className="btn btn-primary" onClick={save} disabled={busy}>{edit ? 'Сохранить' : `Создать группу${members.length ? ` · ${members.length + 1}` : ''}`}</button>
@@ -124,7 +193,12 @@ function GroupDialog({ type, chatId }) {
       <form onSubmit={save} className="form-grid">
         <div className="group-ident">
           <div className="group-ident-avatar">
-            <span className="avatar" style={{ width: 72, height: 72, borderRadius: 20, background: color, fontSize: 24 }}>{initials(title || 'Объект')}</span>
+            <AvatarPicker src={chat?.avatar && !photo} onFile={setPhoto} onRemove={edit && chat?.avatar && !photo ? removePhoto : null}>
+              <span className="avatar" style={{ width: 76, height: 76, borderRadius: 20, background: color, fontSize: 24 }}>
+                {initials(title || 'Объект')}
+                {shownAvatar && <img className="avatar-img" src={shownAvatar} alt="" />}
+              </span>
+            </AvatarPicker>
             <div className="swatches" role="radiogroup" aria-label="Цвет группы">
               {GROUP_COLORS.map((c) => (
                 <button key={c} type="button" role="radio" aria-checked={color === c} aria-label={`Цвет ${c}`} className={'swatch' + (color === c ? ' swatch-on' : '')} style={{ background: c, '--sw': c }} onClick={() => setColor(c)} />
@@ -145,8 +219,8 @@ function GroupDialog({ type, chatId }) {
 
         {!edit && (
           <section>
-            <h3 className="section-title">Участники <span>{members.length ? `${members.length} выбрано` : 'вы будете владельцем'}</span></h3>
-            <MemberPicker selected={members} setSelected={setMembers} />
+            <h3 className="section-title">Участники <span>{members.length ? `${members.length} выбрано · вы — владелец` : 'вы будете владельцем'}</span></h3>
+            <MemberPicker selected={members} setSelected={setMembers} roles={roles} setRoles={setRoles} />
           </section>
         )}
 
@@ -154,6 +228,9 @@ function GroupDialog({ type, chatId }) {
           <h3 className="section-title">Правила группы</h3>
           <Switch checked={showReceipts} onChange={setShowReceipts} label="Показывать всем, кто и когда прочитал"
             hint={showReceipts ? 'Время прочтения видят все участники' : 'Время прочтения видит только автор сообщения'} />
+          <Switch checked={historyForNew} onChange={setHistoryForNew} label="Новые участники видят историю" hint="Фото, видео и переписка с начала работ по объекту" />
+          <Switch checked={onlyAdminsAdd} onChange={setOnlyAdminsAdd} label="Добавлять людей могут только администраторы" />
+          <Switch checked={guestDownload} onChange={setGuestDownload} label="Гости могут скачивать фото, видео и файлы" hint="Смотреть в приложении гости могут в любом случае" />
         </section>
         {error && <div className="form-error" role="alert">{error}</div>}
       </form>
@@ -165,12 +242,14 @@ function AddMembersDialog({ chatId }) {
   const s = useStore();
   const chat = s.chats[chatId];
   const [selected, setSelected] = useState([]);
+  const [roles, setRoles] = useState({});
   const [busy, setBusy] = useState(false);
   const exclude = useMemo(() => chat?.members.map((m) => m.userId) ?? [], [chat]);
+  const manager = chat?.myRole === 'owner' || chat?.myRole === 'admin';
   async function add() {
     setBusy(true);
     try {
-      const updated = await request('POST', `/api/chats/${chatId}/members`, { userIds: selected });
+      const updated = await request('POST', `/api/chats/${chatId}/members`, { members: selected.map((id) => ({ userId: id, role: roles[id] || 'member' })) });
       setState((st) => ({ chats: { ...st.chats, [updated.id]: updated } }));
       closeModal();
     } catch (e) {
@@ -179,12 +258,107 @@ function AddMembersDialog({ chatId }) {
     }
   }
   return (
-    <Dialog title="Добавить участников" width={520}
+    <Dialog title="Добавить участников" width={560}
       footer={<>
         <button className="btn btn-soft" onClick={closeModal}>Отмена</button>
         <button className="btn btn-primary" onClick={add} disabled={busy || !selected.length}>Добавить{selected.length ? ` · ${selected.length}` : ''}</button>
       </>}>
-      <MemberPicker selected={selected} setSelected={setSelected} exclude={exclude} />
+      <MemberPicker selected={selected} setSelected={setSelected} exclude={exclude} roles={manager ? roles : null} setRoles={setRoles} />
+    </Dialog>
+  );
+}
+
+function InviteDialog({ chatId }) {
+  const s = useStore();
+  const chat = s.chats[chatId];
+  const [link, setLink] = useState(null);
+  const [error, setError] = useState('');
+  const [days, setDays] = useState(7);
+  async function create() {
+    setError('');
+    try {
+      const r = await request('POST', `/api/chats/${chatId}/invites`, { days });
+      // для браузера предпочтительнее HTTPS-адрес сервера
+      const base = s.serverUrl.replace(/^http:\/\/([^/:]+):8080$/, 'https://$1:8443');
+      setLink({ url: base + r.path, expiresAt: r.expiresAt });
+    } catch (e) { setError(e.message); }
+  }
+  function copy() {
+    navigator.clipboard?.writeText(link.url).then(() => toast('Ссылка скопирована')).catch(() => toast('Скопируйте ссылку вручную'));
+  }
+  return (
+    <Dialog title="Пригласить по ссылке" width={520}
+      footer={<><button className="btn btn-soft" onClick={closeModal}>Закрыть</button>{link ? <button className="btn btn-primary" onClick={copy}><Icon name="copy" size={18} />Копировать ссылку</button> : <button className="btn btn-primary" onClick={create}>Создать ссылку</button>}</>}>
+      <div className="form-grid">
+        <p className="muted" style={{ margin: 0 }}>По ссылке человек со стороны — заказчик, прораб подрядчика — сам заведёт себе учётную запись и попадёт в группу «{chat?.title}» как <strong>гость</strong>: видит только эту группу и её участников, не может создавать группы.</p>
+        {!link ? (
+          <label className="field"><span>Срок действия ссылки</span>
+            <select className="select" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+              <option value={1}>1 день</option><option value={7}>7 дней</option><option value={30}>30 дней</option>
+            </select>
+          </label>
+        ) : (
+          <div className="invite-link">
+            <input readOnly value={link.url} onFocus={(e) => e.target.select()} aria-label="Ссылка-приглашение" />
+            <small className="muted">Действует до {new Date(link.expiresAt).toLocaleDateString('ru-RU')}. Откройте в браузере; потребуется подтвердить предупреждение о сертификате.</small>
+          </div>
+        )}
+        {error && <div className="form-error">{error}</div>}
+      </div>
+    </Dialog>
+  );
+}
+
+const STATUS_PRESETS = ['На объекте', 'На совещании', 'В командировке', 'В отпуске', 'На больничном', 'Работаю из дома'];
+
+function ProfileDialog() {
+  const s = useStore();
+  const me = s.me;
+  const [statusText, setStatusText] = useState(me.status?.text || '');
+  const [until, setUntil] = useState(me.status?.until ? new Date(me.status.until).toISOString().slice(0, 10) : '');
+  const [position, setPosition] = useState(me.position || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function setAvatar(file) {
+    try { const u = await uploadAvatar('/api/me/avatar', file); setState((st) => ({ me: { ...st.me, ...u }, users: { ...st.users, [u.id]: u } })); } catch (e) { setError(e.message); }
+  }
+  async function save() {
+    setBusy(true);
+    try {
+      const untilTs = until ? new Date(`${until}T23:59:00`).getTime() : null;
+      const u = await request('PATCH', '/api/me', { statusText: statusText.trim(), statusUntil: untilTs, position });
+      setState((st) => ({ me: { ...st.me, ...u }, users: { ...st.users, [u.id]: u } }));
+      closeModal();
+    } catch (e) { setError(e.message); setBusy(false); }
+  }
+  return (
+    <Dialog title="Мой профиль" width={480}
+      footer={<><button className="btn btn-soft" onClick={closeModal}>Отмена</button><button className="btn btn-primary" onClick={save} disabled={busy}>Сохранить</button></>}>
+      <div className="form-grid">
+        <div className="profile-head">
+          <AvatarPicker src={me.avatar} onFile={setAvatar} onRemove={me.avatar ? () => setAvatar(null) : null}>
+            <UserAvatar user={me} size={76} />
+          </AvatarPicker>
+          <div><strong>{me.name}</strong><small className="muted">{me.login}{me.department ? ` · ${me.department}` : ''}</small></div>
+        </div>
+        <label className="field"><span>Должность</span><input value={position} onChange={(e) => setPosition(e.target.value)} maxLength={80} /></label>
+        <div className="field">
+          <span>Статус <em>— видят все коллеги</em></span>
+          <div className="dept-chips">
+            {STATUS_PRESETS.map((p) => <button key={p} type="button" className={'chip chip-line' + (statusText === p ? ' chip-active' : '')} onClick={() => setStatusText(statusText === p ? '' : p)}>{p}</button>)}
+          </div>
+          <input value={statusText} onChange={(e) => setStatusText(e.target.value)} placeholder="Например: на объекте до 15:00" maxLength={80} />
+        </div>
+        {statusText && (
+          <label className="field"><span>До какого числа <em>— статус снимется сам</em></span>
+            <div className="due-row">
+              <input type="date" className="date-input" value={until} onChange={(e) => setUntil(e.target.value)} aria-label="До какого числа" />
+              {until && <button type="button" className="link-btn" onClick={() => setUntil('')}>Без срока</button>}
+            </div>
+          </label>
+        )}
+        {error && <div className="form-error">{error}</div>}
+      </div>
     </Dialog>
   );
 }
@@ -224,6 +398,8 @@ function UserDialog({ type, userId }) {
   const [position, setPosition] = useState(u?.position || '');
   const [password, setPassword] = useState('');
   const [isAdmin, setIsAdmin] = useState(u?.isAdmin || false);
+  const [department, setDepartment] = useState(u?.department || '');
+  const [isGuest, setIsGuest] = useState(u?.isGuest || false);
   const [isActive, setIsActive] = useState(u ? u.isActive : true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -236,12 +412,12 @@ function UserDialog({ type, userId }) {
     try {
       let saved;
       if (edit) {
-        const body = { name, position, isAdmin, isActive };
+        const body = { name, position, department, isAdmin: isAdmin && !isGuest, isActive, isGuest };
         if (password) body.password = password;
         saved = await request('PATCH', `/api/users/${userId}`, body);
         toast('Изменения сохранены');
       } else {
-        saved = await request('POST', '/api/users', { login, name, position, password, isAdmin });
+        saved = await request('POST', '/api/users', { login, name, position, department, password, isAdmin: isAdmin && !isGuest, isGuest });
         toast(`Сотрудник добавлен. Передайте ему логин «${login}» и пароль.`);
       }
       setState((st) => ({ users: { ...st.users, [saved.id]: saved } }));
@@ -262,11 +438,16 @@ function UserDialog({ type, userId }) {
           <label className="field"><span>Логин для входа</span><input value={login} onChange={(e) => setLogin(e.target.value)} autoFocus placeholder="например, ivanov" autoComplete="off" /></label>
         )}
         <label className="field"><span>Имя и фамилия</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ольга Ким" /></label>
-        <label className="field"><span>Должность</span><input value={position} onChange={(e) => setPosition(e.target.value)} placeholder="Архитектор" /></label>
+        <div className="field-row">
+          <label className="field"><span>Должность</span><input value={position} onChange={(e) => setPosition(e.target.value)} placeholder="Архитектор" /></label>
+          <label className="field"><span>Отдел</span><input value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="АР" list="departments" /></label>
+        </div>
+        <datalist id="departments">{[...new Set(Object.values(s.users).map((x) => x.department).filter(Boolean))].map((d) => <option key={d} value={d} />)}</datalist>
         <label className="field"><span>{edit ? 'Новый пароль' : 'Пароль'} <em>{edit ? '— оставьте пустым, чтобы не менять' : '— не короче 6 символов'}</em></span>
           <input type="text" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
         </label>
-        <Switch checked={isAdmin} onChange={setIsAdmin} label="Администратор" hint="Может добавлять и отключать сотрудников" />
+        <Switch checked={isGuest} onChange={(v) => { setIsGuest(v); if (v) setIsAdmin(false); }} label="Внешний участник (гость)" hint="Заказчик или подрядчик: видит только свои группы и их участников" />
+        {!isGuest && <Switch checked={isAdmin} onChange={setIsAdmin} label="Администратор" hint="Может добавлять и отключать сотрудников" />}
         {edit && !self && <Switch checked={isActive} onChange={setIsActive} label="Доступ разрешён" hint={isActive ? 'Сотрудник может входить' : 'Вход закрыт, сессии завершены'} />}
         {error && <div className="form-error" role="alert">{error}</div>}
         <button type="submit" hidden />

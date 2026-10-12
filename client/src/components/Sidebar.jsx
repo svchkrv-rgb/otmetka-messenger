@@ -79,8 +79,9 @@ export default function Sidebar() {
             <div className="menu menu-up" role="menu" onMouseLeave={() => setMenu(false)}>
               <div className="menu-head">
                 <strong>{s.me.name}</strong>
-                <span>{s.me.position || s.me.login}</span>
+                <span>{s.me.status ? statusText(s.me) : (s.me.position || s.me.login)}</span>
               </div>
+              <button role="menuitem" onClick={() => { setMenu(false); openModal('profile'); }}><Icon name="user" size={18} />Профиль, фото и статус</button>
               <button role="menuitem" onClick={() => { setMenu(false); openModal('password'); }}><Icon name="key" size={18} />Сменить пароль</button>
               <button role="menuitem" className="danger" onClick={() => { setMenu(false); logout(); }}><Icon name="logout" size={18} />Выйти</button>
             </div>

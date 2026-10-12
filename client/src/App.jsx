@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useStore, bootstrap, logout, setState } from './store.js';
 import Login from './components/Login.jsx';
 import Sidebar from './components/Sidebar.jsx';
@@ -6,9 +6,11 @@ import ChatView from './components/ChatView.jsx';
 import InfoPanel from './components/InfoPanel.jsx';
 import Modals from './components/Modals.jsx';
 import CallLayer from './components/CallLayer.jsx';
+import InviteScreen from './components/InviteScreen.jsx';
 
 export default function App() {
   const s = useStore();
+  const [invite, setInvite] = useState(() => window.location.pathname.match(/^\/invite\/([\w-]+)/)?.[1] || null);
 
   useEffect(() => {
     if (s.token && !s.me) bootstrap();
@@ -20,6 +22,7 @@ export default function App() {
     document.title = n ? `(${n}) Отметка` : 'Отметка';
   }, [s.chats]);
 
+  if (invite) return <InviteScreen token={invite} onDone={() => setInvite(null)} />;
   if (!s.token) return <Login />;
 
   if (!s.me || !Object.keys(s.users).length) {

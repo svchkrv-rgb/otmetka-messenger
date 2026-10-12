@@ -212,6 +212,40 @@ function summary() {
     await B.getByRole('button', { name: 'Закрыть' }).first().click();
   });
 
+  // ---------- Этап 2 ----------
+  await step('статус «В отпуске» в профиле виден коллегам', async () => {
+    await B.getByRole('button', { name: /Профиль/ }).last().click();
+    await B.getByRole('menuitem', { name: 'Профиль, фото и статус' }).click();
+    await B.getByRole('dialog').getByRole('button', { name: 'В отпуске' }).click();
+    await B.getByRole('dialog').getByRole('button', { name: 'Сохранить' }).click();
+    await A.getByRole('button', { name: 'Участники и настройки группы' }).click();
+    await A.locator('.member', { hasText: 'Ольга Ким' }).locator('small', { hasText: 'В отпуске' }).waitFor({ timeout: 8000 });
+  });
+
+  await step('приглашение по ссылке: гость регистрируется и попадает в группу', async () => {
+    await A.getByRole('button', { name: 'Пригласить по ссылке' }).click();
+    await A.getByRole('dialog').getByRole('button', { name: 'Создать ссылку' }).click();
+    const url = await A.getByLabel('Ссылка-приглашение').inputValue();
+    const path = new URL(url).pathname;
+    await A.getByRole('dialog').getByRole('button', { name: 'Закрыть' }).click();
+    const C = await newUser('guest');
+    await C.goto(BASE + path);
+    await C.getByLabel('Имя и фамилия').fill('Денис Громов');
+    await C.getByLabel('Придумайте логин').fill('denis' + suffix);
+    await C.getByLabel(/Пароль/).fill('secret9');
+    await C.getByRole('button', { name: 'Создать и присоединиться' }).click();
+    await C.getByRole('heading', { name: groupTitle }).waitFor({ timeout: 10000 });
+    await A.locator('.member', { hasText: 'Денис Громов' }).locator('.member-role', { hasText: 'гость' }).waitFor({ timeout: 8000 });
+    await A.screenshot({ path: `${SHOTS}/6-group-info.png` });
+    await C.close();
+  });
+
+  await step('отключение звука группы', async () => {
+    await A.locator('.info-actions').getByRole('button', { name: 'Звук' }).click();
+    await A.locator('.info-actions').getByRole('button', { name: 'Без звука' }).waitFor({ timeout: 5000 });
+    await A.getByRole('button', { name: 'Закрыть' }).first().click();
+  });
+
   await step('видеозвонок: входящий вызов', async () => {
     await A.getByRole('button', { name: 'Сотрудники' }).click();
     await A.getByRole('button', { name: 'Видеозвонок: Ольга Ким' }).click();
