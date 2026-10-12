@@ -1,0 +1,21 @@
+{
+  "name": "otmetka-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Сервер мессенджера «Отметка»",
+  "main": "src/index.js",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --no-warnings src/index.js",
+    "dev": "node --no-warnings --watch src/index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "selfsigned": "^2.4.1",
+    "ws": "^8.18.0"
+  }
+}

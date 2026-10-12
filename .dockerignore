@@ -1,0 +1,6 @@
+**/node_modules
+**/dist
+data
+client/src-tauri
+.git
+.github

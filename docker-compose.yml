@@ -1,0 +1,17 @@
+services:
+  otmetka:
+    image: ghcr.io/svchkrv-rgb/otmetka-messenger:latest
+    build: .
+    container_name: otmetka
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # HTTP: приложение для Windows и API
+      - "8443:8443"   # HTTPS: браузер (нужен для камеры и микрофона)
+    environment:
+      ADMIN_LOGIN: admin
+      ADMIN_PASSWORD: admin   # действует только при первом запуске — потом смените пароль в приложении
+      MAX_UPLOAD_MB: 500
+      # Для звонков через интернет добавьте свой TURN-сервер (см. README):
+      # ICE_SERVERS: '[{"urls":"stun:stun.l.google.com:19302"},{"urls":"turn:turn.example.ru:3478","username":"otmetka","credential":"пароль"}]'
+    volumes:
+      - ./data:/data   # база, файлы, сертификат — делайте резервные копии этой папки
