@@ -38,9 +38,42 @@ jobs:
         if: always()
         run: cat "$RUNNER_TEMP/server.log" || true
 
+  ui:
+    name: Проверка интерфейса в браузере
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Сборка
+        run: |
+          cd client && npm install --no-audit --no-fund && npm install --no-save --no-audit --no-fund playwright@1.48.2 && npm run build
+          cd ../server && npm install --omit=dev --no-audit --no-fund
+
+      - name: Браузер Chromium
+        working-directory: client
+        run: npx playwright install --with-deps chromium
+
+      - name: "Сценарии: вход, группа, прочтения, видеозвонок"
+        run: |
+          (cd server && DATA_DIR="$RUNNER_TEMP/data" HTTPS_PORT=0 node --no-warnings src/index.js > "$RUNNER_TEMP/server.log" 2>&1 &)
+          for i in $(seq 1 30); do curl -sf http://localhost:8080/api/health > /dev/null && break; sleep 0.5; done
+          cd client && BASE=http://localhost:8080 SHOTS="$RUNNER_TEMP/ui-shots" node test/ui-smoke.mjs
+
+      - name: Снимки экрана
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: ${{ runner.temp }}/ui-shots
+          if-no-files-found: ignore
+
   windows:
     name: Установщик для Windows
-    needs: test
+    needs: [test, ui]
     runs-on: windows-latest
     permissions:
       contents: write
