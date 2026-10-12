@@ -61,6 +61,14 @@ export function normalizeServer(u) {
   let url = (u || '').trim().replace(/\/+$/, '');
   if (!url) return '';
   if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+  // Порт не указан — подставляем стандартные порты сервера «Отметки»
+  try {
+    const u = new URL(url);
+    if (!u.port) {
+      u.port = u.protocol === 'https:' ? '8443' : '8080';
+      url = u.origin + u.pathname.replace(/\/+$/, '');
+    }
+  } catch { /* оставляем как ввели */ }
   return url;
 }
 

@@ -35,7 +35,7 @@ export default function Login() {
         {showServer ? (
           <label className="field">
             <span>Адрес сервера</span>
-            <input value={server} onChange={(e) => setServer(e.target.value)} placeholder="например, 192.168.1.10:8080" autoFocus={isTauri && !server} required />
+            <input value={server} onChange={(e) => setServer(e.target.value)} placeholder="например, 192.168.3.215:8080" autoFocus={isTauri && !server} required />
           </label>
         ) : (
           <button type="button" className="link-btn login-server" onClick={() => setShowServer(true)}>Сервер: {server} · изменить</button>
