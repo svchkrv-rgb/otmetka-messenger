@@ -155,6 +155,109 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const off = await wsA.wait((e) => e.type === 'call:ended' && e.callId === callId + 'b');
   ok(off.reason === 'offline', 'звонок офлайн-сотруднику завершается сразу');
 
+  // ---------- Этап 1: переписка ----------
+  const send = (token, cid, fields, files = []) => {
+    const f = new FormData();
+    for (const [k, v] of Object.entries(fields)) f.append(k, typeof v === 'string' ? v : JSON.stringify(v));
+    for (const [blob, name] of files) f.append('files', blob, name);
+    return api(token, 'POST', `/api/chats/${cid}/messages`, f);
+  };
+
+  const reply = await send(O, chatId, { text: 'Отвечаю @Администратор', replyTo: String(msg.data.id), mentions: [adm.data.user.id] });
+  ok(reply.status === 201 && reply.data.replyTo?.id === msg.data.id, 'ответ с цитатой');
+  ok(reply.data.mentions.includes(adm.data.user.id), 'упоминание сохранено');
+  const chatsA = await api(A, 'GET', '/api/chats');
+  ok(chatsA.data.find((c) => c.id === chatId).mentionUnread >= 1, 'счётчик упоминаний');
+
+  const edit = await api(O, 'PATCH', `/api/messages/${reply.data.id}`, { text: 'Отвечаю (исправлено)' });
+  ok(edit.status === 200 && edit.data.editedAt > 0, 'редактирование своего сообщения');
+  const upd = await wsA.wait((e) => e.type === 'message:updated' && e.message.id === reply.data.id);
+  ok(upd.message.text === 'Отвечаю (исправлено)', 'правка пришла в реальном времени');
+  const editOther = await api(A, 'PATCH', `/api/messages/${reply.data.id}`, { text: 'чужое' });
+  ok(editOther.status === 403, 'чужое сообщение править нельзя');
+  const del = await api(O, 'DELETE', `/api/messages/${reply.data.id}`);
+  const delMsg = await wsA.wait((e) => e.type === 'message:updated' && e.message.id === reply.data.id && e.message.deletedAt);
+  ok(del.status === 200 && delMsg.message.text === '', 'удаление сообщения');
+
+  const imp = await send(A, chatId, { text: 'Приёмка переносится на 19.10', important: 'true' });
+  ok(imp.data.important === true, 'важное сообщение');
+  const conf = await api(O, 'POST', `/api/messages/${imp.data.id}/confirm`);
+  ok(conf.status === 200, 'подтверждение прочтения');
+  const rc = await api(A, 'GET', `/api/messages/${imp.data.id}/receipts`);
+  ok(rc.data.confirmed.some((c) => c.userId === u1.data.id) && rc.data.read.some((r) => r.userId === u1.data.id), 'подтверждение видно автору');
+  const remind = await api(A, 'POST', `/api/messages/${imp.data.id}/remind`);
+  ok(remind.status === 200 && remind.data.count === 1, 'напоминание тем, кто не подтвердил');
+  const remind2 = await api(A, 'POST', `/api/messages/${imp.data.id}/remind`);
+  ok(remind2.status === 429, 'напоминание не чаще раза в минуту');
+
+  const poll = await api(A, 'POST', `/api/chats/${chatId}/polls`, { question: 'Бетон В30?', options: ['Да', 'Нет'] });
+  ok(poll.status === 201 && poll.data.poll.options.length === 2, 'опрос создан');
+  const vote = await api(O, 'POST', `/api/messages/${poll.data.id}/vote`, { optionIds: [poll.data.poll.options[0].id] });
+  ok(vote.data.poll.options[0].votes.includes(u1.data.id), 'голос учтён');
+
+  const task = await api(A, 'POST', `/api/chats/${chatId}/tasks`, { title: 'Прислать фото опалубки', assigneeId: u1.data.id, dueAt: Date.now() + 86400000 });
+  ok(task.status === 201 && task.data.task.assigneeId === u1.data.id, 'задача поставлена');
+  const myTasks = await api(O, 'GET', '/api/tasks?scope=assigned');
+  ok(myTasks.data.some((m) => m.id === task.data.id), 'задача в списке «Мои задачи»');
+  const done = await api(O, 'PATCH', `/api/messages/${task.data.id}/task`, { done: true });
+  ok(done.data.task.doneAt > 0, 'задача выполнена');
+
+  const loc = await api(O, 'POST', `/api/chats/${chatId}/location`, { lat: 55.75, lon: 37.62, label: 'Корпус 2' });
+  ok(loc.status === 201 && loc.data.meta.lat === 55.75, 'геометка');
+  const contact = await api(A, 'POST', `/api/chats/${chatId}/contact`, { userId: u2.data.id });
+  ok(contact.status === 201 && contact.data.meta.userId === u2.data.id, 'контакт');
+
+  const voice = await send(O, chatId, { text: '', filesMeta: [{ voice: true, duration: 3.2, peaks: [0.1, 0.5, 0.9] }] }, [[new Blob([new Uint8Array(64)], { type: 'audio/webm' }), 'голосовое.webm']]);
+  ok(voice.status === 201 && voice.data.attachments[0].kind === 'audio' && voice.data.attachments[0].meta.duration === 3.2, 'голосовое сообщение');
+
+  const sched = await send(A, chatId, { text: 'Отложенное', sendAt: String(Date.now() + 3600000) });
+  ok(sched.status === 201 && sched.data.scheduled?.id, 'отложенная отправка');
+  const schedList = await api(A, 'GET', '/api/scheduled');
+  ok(schedList.data.length === 1, 'список запланированных');
+  const sentNow = await api(A, 'POST', `/api/scheduled/${sched.data.scheduled.id}/send`);
+  ok(sentNow.data.text === 'Отложенное', 'отправить запланированное сейчас');
+
+  const found = await api(O, 'GET', `/api/chats/${chatId}/search?q=${encodeURIComponent('АРМИРОВАНИЕ')}`);
+  ok(found.data.some((r) => r.id === msg.data.id), 'поиск по чату без учёта регистра');
+  const around = await api(O, 'GET', `/api/chats/${chatId}/messages?around=${msg.data.id}&limit=10`);
+  ok(around.data.some((m) => m.id === msg.data.id), 'загрузка истории вокруг сообщения');
+  const media = await api(O, 'GET', `/api/chats/${chatId}/attachments`);
+  ok(media.data.some((a) => a.kind === 'image'), 'список фото и видео группы');
+
+  // ---------- Этап 2: группы и люди ----------
+  const mute = await api(O, 'PATCH', `/api/chats/${chatId}/mute`, { muted: true });
+  ok(mute.data.muted === true, 'звук группы отключён');
+  const st = await api(O, 'PATCH', '/api/me', { statusText: 'В отпуске', statusUntil: Date.now() + 86400000 });
+  ok(st.data.status?.text === 'В отпуске', 'статус сотрудника');
+  const av = new FormData();
+  av.append('avatar', new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' }), 'a.png');
+  const avatar = await api(O, 'POST', '/api/me/avatar', av);
+  ok(avatar.data.avatar?.startsWith('/avatars/'), 'фото профиля');
+
+  const g2 = await api(A, 'POST', '/api/chats/group', { title: 'Школа', historyForNew: false, members: [{ userId: u1.data.id, role: 'admin' }] });
+  ok(g2.data.historyForNew === false && g2.data.members.find((m) => m.userId === u1.data.id).role === 'admin', 'группа с правилами и ролями');
+  await send(A, g2.data.id, { text: 'старое сообщение' });
+  await sleep(5);
+  await api(A, 'POST', `/api/chats/${g2.data.id}/members`, { userIds: [u2.data.id] });
+  const pHist = await api(P, 'GET', `/api/chats/${g2.data.id}/messages`);
+  ok(!pHist.data.some((m) => m.text === 'старое сообщение'), 'новый участник не видит старую историю');
+
+  const inv = await api(A, 'POST', `/api/chats/${chatId}/invites`, {});
+  ok(inv.status === 201 && inv.data.token, 'приглашение по ссылке');
+  const invInfo = await api(null, 'GET', `/api/invites/${inv.data.token}`);
+  ok(invInfo.data.chatTitle === 'Северный квартал · Корпус 2', 'страница приглашения без входа');
+  const guest = await api(null, 'POST', `/api/invites/${inv.data.token}/accept`, { name: 'Денис Громов', login: 'denis' + suffix, password: 'secret4' });
+  ok(guest.status === 200 && guest.data.user.isGuest, 'гость зарегистрировался по ссылке');
+  const G = guest.data.token;
+  const gChats = await api(G, 'GET', '/api/chats');
+  ok(gChats.data[0].myRole === 'guest', 'у гостя роль «гость»');
+  const gGroup = await api(G, 'POST', '/api/chats/group', { title: 'x' });
+  ok(gGroup.status === 403, 'гость не создаёт группы');
+  const gUsers = await api(G, 'GET', '/api/users');
+  ok(!gUsers.data.some((u) => u.name === 'Павел Зуев' && !gChats.data[0].members.some((m) => m.userId === u.id)), 'гость видит только участников своих групп');
+  const gDl = await fetch(`${BASE}${msg.data.attachments[0].url}?token=${G}&download=1`);
+  ok(gDl.status === 403, 'гостю скачивание закрыто правилом группы');
+
   wsA.ws.close();
   wsO.ws.close();
   console.log('\nВсе проверки пройдены.');
