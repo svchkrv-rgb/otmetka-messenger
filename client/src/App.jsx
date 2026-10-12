@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { useStore, bootstrap, logout } from './store.js';
+import { useStore, bootstrap, logout, setState } from './store.js';
 import Login from './components/Login.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import ChatView from './components/ChatView.jsx';
@@ -53,7 +53,12 @@ export default function App() {
       {s.activeChatId && s.infoOpen && <InfoPanel chatId={s.activeChatId} />}
       <Modals />
       <CallLayer />
-      {s.toast && <div className="toast" role="status" key={s.toast.id}>{s.toast.text}</div>}
+      {s.toast && (
+        <div className="toast" role="status" key={s.toast.id}>
+          <span>{s.toast.text}</span>
+          {s.toast.action && <button className="toast-action" onClick={() => { s.toast.action.run(); setState({ toast: null }); }}>{s.toast.action.label}</button>}
+        </div>
+      )}
     </div>
   );
 }

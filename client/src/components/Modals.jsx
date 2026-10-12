@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { useStore, closeModal, request, setState, toast, getState } from '../store.js';
-import { GROUP_COLORS, initials } from '../utils.js';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useStore, closeModal, request, setState, toast, getState, createPoll, createTask, sendLocation, sendContact } from '../store.js';
+import { GROUP_COLORS, initials, formatDuration } from '../utils.js';
 import { UserAvatar } from './Avatar.jsx';
 import Icon from './Icon.jsx';
 
@@ -20,6 +20,12 @@ export default function Modals() {
     'user-new': UserDialog,
     'user-edit': UserDialog,
     image: ImageViewer,
+    poll: PollDialog,
+    task: TaskDialog,
+    camera: CameraDialog,
+    location: LocationDialog,
+    contact: ContactDialog,
+    schedule: ScheduleDialog,
   }[modal.type];
   return C ? <C {...modal} /> : null;
 }
@@ -274,11 +280,283 @@ function ImageViewer({ url, downloadUrl, name }) {
     <div className="viewer" onMouseDown={(e) => { if (e.target === e.currentTarget) closeModal(); }} role="dialog" aria-label={name}>
       <div className="viewer-bar">
         <span>{name}</span>
-        <a className="icon-btn icon-btn-dark" href={downloadUrl} download={name} aria-label="Скачать"><Icon name="download" /></a>
+        {downloadUrl && <a className="icon-btn icon-btn-dark" href={downloadUrl} download={name} aria-label="Скачать"><Icon name="download" /></a>}
         <button className="icon-btn icon-btn-dark" aria-label="Закрыть" onClick={closeModal}><Icon name="close" /></button>
       </div>
       <img src={url} alt={name} onMouseDown={(e) => e.stopPropagation()} />
     </div>
+  );
+}
+
+// ---------- Опрос ----------
+function PollDialog({ chatId }) {
+  const [question, setQuestion] = useState('');
+  const [options, setOptions] = useState(['Да', 'Нет']);
+  const [multiple, setMultiple] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function save(e) {
+    e?.preventDefault();
+    const opts = options.map((o) => o.trim()).filter(Boolean);
+    if (!question.trim()) { setError('Напишите вопрос'); return; }
+    if (opts.length < 2) { setError('Нужно минимум два варианта'); return; }
+    setBusy(true);
+    try { await createPoll(chatId, { question, options: opts, multiple }); closeModal(); } catch (err) { setError(err.message); setBusy(false); }
+  }
+  return (
+    <Dialog title="Новый опрос" width={480}
+      footer={<><button className="btn btn-soft" onClick={closeModal}>Отмена</button><button className="btn btn-primary" onClick={save} disabled={busy}>Отправить опрос</button></>}>
+      <form onSubmit={save} className="form-grid">
+        <label className="field"><span>Вопрос</span><input value={question} onChange={(e) => setQuestion(e.target.value)} autoFocus placeholder="Меняем бетон В25 на В30 в плите Пм-3?" maxLength={300} /></label>
+        <div className="field">
+          <span>Варианты ответа</span>
+          <div className="poll-edit">
+            {options.map((o, i) => (
+              <div key={i} className="poll-edit-row">
+                <input value={o} onChange={(e) => setOptions(options.map((x, j) => (j === i ? e.target.value : x)))} placeholder={`Вариант ${i + 1}`} aria-label={`Вариант ${i + 1}`} maxLength={120} />
+                {options.length > 2 && <button type="button" className="icon-btn icon-btn-sm" aria-label="Убрать вариант" onClick={() => setOptions(options.filter((_, j) => j !== i))}><Icon name="close" size={14} stroke={2.25} /></button>}
+              </div>
+            ))}
+            {options.length < 10 && <button type="button" className="link-btn" onClick={() => setOptions([...options, ''])}>+ Добавить вариант</button>}
+          </div>
+        </div>
+        <Switch checked={multiple} onChange={setMultiple} label="Можно выбрать несколько вариантов" />
+        {error && <div className="form-error" role="alert">{error}</div>}
+        <button type="submit" hidden />
+      </form>
+    </Dialog>
+  );
+}
+
+// ---------- Задача ----------
+function toLocalInput(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function TaskDialog({ chatId, fromMessage }) {
+  const s = useStore();
+  const chat = s.chats[chatId];
+  const [title, setTitle] = useState(fromMessage ? plainFrom(fromMessage.text) : '');
+  const peer = chat?.type === 'direct' ? chat.members.find((m) => m.userId !== s.me.id)?.userId : null;
+  const [assigneeId, setAssigneeId] = useState(peer ? String(peer) : '');
+  const [due, setDue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const tomorrow = toLocalInput(Date.now() + 86400000);
+  async function save(e) {
+    e?.preventDefault();
+    if (!title.trim()) { setError('Опишите задачу'); return; }
+    setBusy(true);
+    const dueAt = due ? new Date(`${due}T18:00:00`).getTime() : null;
+    try {
+      await createTask(chatId, { title, assigneeId: Number(assigneeId) || null, dueAt, fromMessageId: fromMessage?.id });
+      closeModal();
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+  return (
+    <Dialog title={fromMessage ? 'Задача из сообщения' : 'Новая задача'} width={480}
+      footer={<><button className="btn btn-soft" onClick={closeModal}>Отмена</button><button className="btn btn-primary" onClick={save} disabled={busy}>Поставить задачу</button></>}>
+      <form onSubmit={save} className="form-grid">
+        <label className="field"><span>Что сделать</span>
+          <textarea className="textarea" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus rows={3} placeholder="Прислать фото армирования захватки 3" maxLength={500} />
+        </label>
+        <label className="field"><span>Исполнитель</span>
+          <select className="select" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
+            <option value="">Без исполнителя</option>
+            {chat?.members.map((m) => s.users[m.userId]).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name, 'ru')).map((u) => (
+              <option key={u.id} value={u.id}>{u.id === s.me.id ? `${u.name} (вы)` : u.name}{u.position ? ` — ${u.position}` : ''}</option>
+            ))}
+          </select>
+        </label>
+        <div className="field">
+          <span>Срок <em>— необязательно</em></span>
+          <div className="due-row">
+            <input type="date" className="date-input" value={due} min={toLocalInput(Date.now())} onChange={(e) => setDue(e.target.value)} aria-label="Срок" />
+            <button type="button" className="chip" onClick={() => setDue(toLocalInput(Date.now()))}>Сегодня</button>
+            <button type="button" className="chip" onClick={() => setDue(tomorrow)}>Завтра</button>
+            <button type="button" className="chip" onClick={() => setDue(toLocalInput(Date.now() + 7 * 86400000))}>Через неделю</button>
+          </div>
+        </div>
+        {error && <div className="form-error" role="alert">{error}</div>}
+      </form>
+    </Dialog>
+  );
+}
+const plainFrom = (t = '') => t.replace(/\*\*|~~|`/g, '').slice(0, 500);
+
+// ---------- Камера ----------
+function CameraDialog({ mode: initialMode = 'photo', onCapture }) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const recRef = useRef(null);
+  const chunks = useRef([]);
+  const [mode, setMode] = useState(initialMode);
+  const [error, setError] = useState('');
+  const [recording, setRecording] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const startedAt = useRef(0);
+
+  useEffect(() => {
+    let stopped = false;
+    (async () => {
+      if (!navigator.mediaDevices?.getUserMedia) { setError('Камера в браузере доступна только по HTTPS или в приложении для Windows.'); return; }
+      try {
+        const st = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: true });
+        if (stopped) { st.getTracks().forEach((t) => t.stop()); return; }
+        streamRef.current = st;
+        if (videoRef.current) { videoRef.current.srcObject = st; videoRef.current.play().catch(() => {}); }
+      } catch (e) {
+        setError(e?.name === 'NotAllowedError' ? 'Нет доступа к камере. Разрешите доступ в настройках.' : 'Камера не найдена или занята.');
+      }
+    })();
+    return () => { stopped = true; try { recRef.current?.stop(); } catch { /* */ } streamRef.current?.getTracks().forEach((t) => t.stop()); };
+  }, []);
+
+  useEffect(() => {
+    if (!recording) return undefined;
+    const t = setInterval(() => setElapsed((Date.now() - startedAt.current) / 1000), 250);
+    return () => clearInterval(t);
+  }, [recording]);
+
+  function takePhoto() {
+    const v = videoRef.current;
+    if (!v?.videoWidth) return;
+    const c = document.createElement('canvas');
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    c.getContext('2d').drawImage(v, 0, 0);
+    c.toBlob((blob) => {
+      onCapture(new File([blob], `Фото ${new Date().toLocaleString('ru-RU').replace(/[/:]/g, '.')}.jpg`, { type: 'image/jpeg' }));
+      closeModal();
+    }, 'image/jpeg', 0.9);
+  }
+  function toggleRecord() {
+    if (recording) { recRef.current?.stop(); return; }
+    const type = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || '';
+    const r = new MediaRecorder(streamRef.current, type ? { mimeType: type } : undefined);
+    chunks.current = [];
+    r.ondataavailable = (e) => { if (e.data.size) chunks.current.push(e.data); };
+    r.onstop = () => {
+      setRecording(false);
+      const mt = r.mimeType || 'video/webm';
+      const blob = new Blob(chunks.current, { type: mt });
+      onCapture(new File([blob], `Видео ${new Date().toLocaleString('ru-RU').replace(/[/:]/g, '.')}.${mt.includes('mp4') ? 'mp4' : 'webm'}`, { type: mt }));
+      closeModal();
+    };
+    r.start(500);
+    recRef.current = r;
+    startedAt.current = Date.now();
+    setElapsed(0);
+    setRecording(true);
+  }
+
+  return (
+    <Dialog title={mode === 'photo' ? 'Снять фото' : 'Записать видео'} width={720}
+      footer={!error && (
+        <>
+          <div className="cam-modes" role="tablist">
+            <button role="tab" aria-selected={mode === 'photo'} className={'chip' + (mode === 'photo' ? ' chip-active' : '')} onClick={() => !recording && setMode('photo')}>Фото</button>
+            <button role="tab" aria-selected={mode === 'video'} className={'chip' + (mode === 'video' ? ' chip-active' : '')} onClick={() => setMode('video')}>Видео</button>
+          </div>
+          <span style={{ flex: 1 }} />
+          {mode === 'photo'
+            ? <button className="btn btn-primary" onClick={takePhoto}><Icon name="camera" size={18} />Снять</button>
+            : <button className={'btn ' + (recording ? 'btn-danger' : 'btn-primary')} onClick={toggleRecord}><Icon name={recording ? 'stop' : 'video'} size={18} />{recording ? `Остановить · ${formatDuration(elapsed)}` : 'Начать запись'}</button>}
+        </>
+      )}>
+      {error ? <div className="form-error">{error}</div> : (
+        <div className="cam-view">
+          <video ref={videoRef} autoPlay playsInline muted />
+          {recording && <span className="cam-rec"><span className="rec-dot rec-dot-on" />REC {formatDuration(elapsed)}</span>}
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+// ---------- Геометка ----------
+function LocationDialog({ chatId }) {
+  const [pos, setPos] = useState(null);
+  const [error, setError] = useState('');
+  const [label, setLabel] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!navigator.geolocation) { setError('Определение местоположения недоступно на этом устройстве.'); return; }
+    navigator.geolocation.getCurrentPosition(
+      (p) => setPos({ lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy }),
+      (e) => setError(e.code === 1 ? 'Нет доступа к местоположению. Разрешите его в настройках Windows: Конфиденциальность → Расположение.' : 'Не удалось определить местоположение.'),
+      { enableHighAccuracy: true, timeout: 15000 },
+    );
+  }, []);
+  async function send() {
+    if (!pos) return;
+    setBusy(true);
+    try { await sendLocation(chatId, { ...pos, label }); closeModal(); } catch { setBusy(false); }
+  }
+  return (
+    <Dialog title="Отправить геометку" width={460}
+      footer={<><button className="btn btn-soft" onClick={closeModal}>Отмена</button><button className="btn btn-primary" onClick={send} disabled={!pos || busy}>Отправить</button></>}>
+      <div className="form-grid">
+        {error ? <div className="form-error">{error}</div> : !pos ? <p className="muted">Определяем местоположение…</p> : (
+          <div className="loc-preview">
+            <Icon name="pin" size={22} />
+            <span className="mono">{pos.lat.toFixed(5)}, {pos.lon.toFixed(5)}</span>
+            <span className="muted">точность ±{Math.round(pos.accuracy)} м</span>
+          </div>
+        )}
+        <label className="field"><span>Подпись <em>— необязательно</em></span><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Корпус 2, захватка 3" maxLength={200} /></label>
+      </div>
+    </Dialog>
+  );
+}
+
+// ---------- Контакт ----------
+function ContactDialog({ chatId }) {
+  const s = useStore();
+  const [q, setQ] = useState('');
+  const list = Object.values(s.users).filter((u) => u.isActive && (!q || u.name.toLowerCase().includes(q.toLowerCase()) || (u.position || '').toLowerCase().includes(q.toLowerCase())))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  async function pick(u) {
+    try { await sendContact(chatId, u.id); closeModal(); } catch { /* показано */ }
+  }
+  return (
+    <Dialog title="Отправить контакт" width={460}>
+      <div className="picker">
+        <label className="search"><Icon name="search" size={18} /><input autoFocus type="search" aria-label="Поиск" placeholder="Имя или должность" value={q} onChange={(e) => setQ(e.target.value)} /></label>
+        <div className="picker-list">
+          {list.map((u) => (
+            <button key={u.id} className="picker-row picker-btn" onClick={() => pick(u)}>
+              <UserAvatar user={u} size={34} showOnline />
+              <span className="picker-name"><span>{u.name}</span><small>{u.position}</small></span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+// ---------- Отправить позже ----------
+function ScheduleDialog({ onPick }) {
+  const d = new Date(Date.now() + 3600000);
+  const p = (n) => String(n).padStart(2, '0');
+  const [value, setValue] = useState(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`);
+  const [error, setError] = useState('');
+  function ok() {
+    const at = new Date(value).getTime();
+    if (!at || at < Date.now() + 30000) { setError('Выберите время в будущем'); return; }
+    closeModal();
+    onPick(at);
+  }
+  return (
+    <Dialog title="Отправить позже" width={380}
+      footer={<><button className="btn btn-soft" onClick={closeModal}>Отмена</button><button className="btn btn-primary" onClick={ok}>Запланировать</button></>}>
+      <div className="form-grid">
+        <label className="field"><span>Дата и время отправки</span><input type="datetime-local" value={value} onChange={(e) => setValue(e.target.value)} autoFocus /></label>
+        {error && <div className="form-error">{error}</div>}
+      </div>
+    </Dialog>
   );
 }
 

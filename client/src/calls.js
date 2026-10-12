@@ -132,6 +132,7 @@ const END_TEXT = {
   missed: 'Пропущенный звонок',
   hangup: 'Звонок завершён',
   'answered-elsewhere': 'Звонок принят на другом устройстве',
+  later: 'Абонент перезвонит позже',
 };
 
 onCallEvent((ev) => {
@@ -160,7 +161,9 @@ onCallEvent((ev) => {
       return;
     case 'call:ended':
       if (!call || call.id !== ev.callId) return;
-      if (ev.reason !== 'hangup' || call.direction === 'out' || call.phase !== 'ringing') toast(END_TEXT[ev.reason] || 'Звонок завершён');
+      if (ev.reason !== 'hangup' || call.direction === 'out' || call.phase !== 'ringing') {
+        toast(ev.reason === 'later' ? `Абонент перезвонит через ${ev.minutes || 10} мин` : (END_TEXT[ev.reason] || 'Звонок завершён'));
+      }
       cleanup();
       return;
     default:
@@ -201,11 +204,28 @@ export async function acceptCall(withVideo) {
   wsSend({ type: 'call:accept', callId: call.id });
 }
 
-export function rejectCall() {
+export function rejectCall(reason, minutes) {
   const call = getState().call;
   if (!call) return;
-  wsSend({ type: 'call:reject', callId: call.id });
+  wsSend({ type: 'call:reject', callId: call.id, reason, minutes });
+  if (reason === 'later') {
+    const peerId = call.peerId;
+    const name = getState().users[peerId]?.name || 'сотруднику';
+    setTimeout(() => {
+      notify('Напоминание', `Вы обещали перезвонить: ${name}`);
+      requestAttention();
+      toast(`Пора перезвонить: ${name}`, { label: 'Позвонить', run: () => startCall(peerId, false) });
+    }, (minutes || 10) * 60000);
+  }
   cleanup();
+}
+
+/** Звонок из чата: в личном — звонок собеседнику, в группе — групповой созвон. */
+export function startChatCall(chatId, peerId, video) {
+  const chat = getState().chats[chatId];
+  if (chat?.type === 'direct' && peerId) return startCall(peerId, video);
+  toast('Групповые созвоны появятся в следующем обновлении');
+  return null;
 }
 
 export function hangUp() {

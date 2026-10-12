@@ -103,22 +103,62 @@ export function callText(m, meId) {
   const kind = c.video ? 'видеозвонок' : 'аудиозвонок';
   const outgoing = m.senderId === meId;
   if (c.outcome === 'completed') return `${outgoing ? 'Исходящий' : 'Входящий'} ${kind} · ${formatDuration(c.duration)}`;
+  if (c.note?.startsWith('later:')) {
+    const min = c.note.split(':')[1];
+    return outgoing ? `Перезвонит через ${min} мин` : `Вы обещали перезвонить через ${min} мин`;
+  }
   if (c.outcome === 'rejected') return outgoing ? `${kind[0].toUpperCase() + kind.slice(1)} отклонён` : `Вы отклонили ${kind}`;
   return outgoing ? `${kind[0].toUpperCase() + kind.slice(1)} без ответа` : `Пропущенный ${kind}`;
 }
 
+function stripMarks(text = '') {
+  return text
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/(^|\s)_([^_]+)_/g, '$1$2');
+}
+
 export function previewText(m, users, meId) {
   if (!m) return '';
+  if (m.deletedAt) return 'Сообщение удалено';
   if (m.kind === 'call') return callText(m, meId);
   if (m.kind === 'system') return m.text;
+  if (m.kind === 'poll') return `Опрос: ${m.text}`;
+  if (m.kind === 'task') return `Задача: ${m.text}`;
+  if (m.kind === 'location') return `Геометка${m.text ? ': ' + m.text : ''}`;
+  if (m.kind === 'contact') return `Контакт: ${m.text}`;
   let prefix = '';
   if (m.attachments?.length) {
     const kinds = new Set(m.attachments.map((a) => a.kind));
-    prefix = kinds.size === 1 && kinds.has('image') ? 'Фото' : kinds.size === 1 && kinds.has('video') ? 'Видео' : 'Файл';
+    if (kinds.size === 1 && kinds.has('audio')) {
+      const d = m.attachments[0].meta?.duration;
+      prefix = `Голосовое${d ? ' ' + formatDuration(d) : ''}`;
+    } else prefix = kinds.size === 1 && kinds.has('image') ? 'Фото' : kinds.size === 1 && kinds.has('video') ? 'Видео' : 'Файл';
     if (m.attachments.length > 1) prefix += ` (${m.attachments.length})`;
   }
-  const text = m.text ? (prefix ? `${prefix} · ${m.text}` : m.text) : prefix;
+  const body = stripMarks(m.text);
+  const text = body ? (prefix ? `${prefix} · ${body}` : body) : prefix;
   return text.replace(/\s+/g, ' ');
+}
+
+export function formatDateTime(ts) {
+  const diff = dayDiff(ts);
+  const d = new Date(ts);
+  if (diff === 0) return `сегодня в ${formatTime(ts)}`;
+  if (diff === -1) return `завтра в ${formatTime(ts)}`;
+  if (diff === 1) return `вчера в ${formatTime(ts)}`;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} в ${formatTime(ts)}`;
+}
+
+export function formatDue(ts) {
+  const diff = dayDiff(ts);
+  const d = new Date(ts);
+  if (diff === 0) return 'сегодня';
+  if (diff === -1) return 'завтра';
+  if (diff === 1) return 'вчера';
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 
 export function randomId() {
@@ -130,4 +170,11 @@ export function randomId() {
 
 export const GROUP_COLORS = ['#C2410C', '#2B6CB0', '#2E7D4F', '#6B4AA0', '#0F5E66', '#3E4349'];
 
-export const ROLE_NAMES = { owner: 'владелец', admin: 'админ', member: '' };
+export const ROLE_NAMES = { owner: 'владелец', admin: 'админ', member: '', guest: 'гость' };
+export const ROLE_LABELS = { owner: 'Владелец', admin: 'Администратор', member: 'Участник', guest: 'Гость' };
+
+export function statusText(user) {
+  if (!user?.status) return '';
+  const until = user.status.until ? ` до ${formatDue(user.status.until).replace(/^(сегодня|завтра)$/, (w) => w)}` : '';
+  return user.status.text + until;
+}

@@ -126,6 +126,92 @@ function summary() {
     await A.locator('.typing', { hasText: 'Ольга печатает' }).waitFor({ timeout: 5000 });
   });
 
+  // ---------- Этап 1 ----------
+  await step('ответ с цитатой и @упоминанием', async () => {
+    const box = B.getByLabel('Сообщение');
+    await box.fill('');
+    await B.locator('.msg-row', { hasText: text }).hover();
+    await B.locator('.msg-row', { hasText: text }).getByRole('button', { name: 'Ответить' }).click();
+    await B.locator('.quote-bar').waitFor({ timeout: 3000 });
+    await box.pressSequentially('@Адм', { delay: 30 });
+    await B.locator('.suggest-row', { hasText: 'Администратор' }).waitFor({ timeout: 3000 });
+    await box.press('Enter');
+    await box.pressSequentially('принято, выезжаю', { delay: 10 });
+    await box.press('Enter');
+    const got = A.locator('.msg-row', { hasText: 'принято, выезжаю' });
+    await got.locator('.reply-quote').waitFor({ timeout: 8000 });
+    await got.locator('.mention-me').waitFor({ timeout: 3000 });
+  });
+
+  await step('«Важное» с подтверждением прочтения', async () => {
+    const box = A.getByLabel('Сообщение');
+    await box.click();
+    await A.locator('.format-bar').getByRole('button', { name: 'Важное — с подтверждением прочтения' }).click();
+    await box.fill('Приёмка переносится на понедельник');
+    await box.press('Enter');
+    const row = B.locator('.msg-row', { hasText: 'Приёмка переносится на понедельник' });
+    await row.getByRole('button', { name: 'Подтвердить прочтение' }).click({ timeout: 8000 });
+    await A.locator('.receipt-pill', { hasText: 'Подтвердили все 1' }).waitFor({ timeout: 8000 });
+  });
+
+  await step('опрос: создание и голосование', async () => {
+    await A.getByRole('button', { name: 'Прикрепить и другие действия' }).click();
+    await A.getByRole('menuitem', { name: 'Опрос' }).click();
+    await A.getByLabel('Вопрос').fill('Бетон В30 в плите Пм-3?');
+    await A.getByRole('dialog').getByRole('button', { name: 'Отправить опрос' }).click();
+    const poll = B.locator('.poll', { hasText: 'Бетон В30 в плите Пм-3?' });
+    await poll.locator('.poll-opt', { hasText: 'Да' }).click({ timeout: 8000 });
+    await A.locator('.poll', { hasText: 'Бетон В30' }).locator('.card-foot', { hasText: 'Проголосовали 1' }).waitFor({ timeout: 8000 });
+  });
+
+  await step('задача через команду /задача и отметка «выполнено»', async () => {
+    const box = B.getByLabel('Сообщение');
+    await box.fill('/зад');
+    await B.locator('.suggest-row', { hasText: '/задача' }).waitFor({ timeout: 3000 });
+    await box.press('Enter');
+    await B.getByLabel('Что сделать').fill('Проверить шаг арматуры у ядра');
+    await B.getByLabel('Исполнитель').selectOption({ label: 'Администратор — Администратор системы' });
+    await B.getByRole('dialog').getByRole('button', { name: 'Поставить задачу' }).click();
+    await A.locator('.task', { hasText: 'Проверить шаг арматуры' }).waitFor({ timeout: 8000 });
+    await A.getByRole('button', { name: 'Задачи' }).click();
+    const item = A.locator('.task-item', { hasText: 'Проверить шаг арматуры' });
+    await item.getByRole('button', { name: 'Отметить выполненной' }).click({ timeout: 8000 });
+    await B.locator('.task-done', { hasText: 'Проверить шаг арматуры' }).waitFor({ timeout: 8000 });
+    await A.getByRole('button', { name: 'Чаты' }).click();
+    await A.locator('.chat-item', { hasText: groupTitle }).click();
+  });
+
+  await step('правка последнего сообщения по стрелке вверх', async () => {
+    const box = A.getByLabel('Сообщение');
+    await box.fill('Черновик сообщения');
+    await box.press('Enter');
+    await A.locator('.bubble-mine', { hasText: 'Черновик сообщения' }).waitFor({ timeout: 5000 });
+    await box.click();
+    await box.press('ArrowUp');
+    await A.locator('.quote-bar', { hasText: 'Редактирование' }).waitFor({ timeout: 3000 });
+    await box.fill('Исправленное сообщение');
+    await box.press('Enter');
+    await B.locator('.msg-row', { hasText: 'Исправленное сообщение' }).locator('.msg-time', { hasText: 'изменено' }).waitFor({ timeout: 8000 });
+  });
+
+  await step('голосовое сообщение', async () => {
+    await A.getByLabel('Сообщение').fill('');
+    await A.getByRole('button', { name: 'Записать голосовое' }).click();
+    await A.locator('.voice-rec').waitFor({ timeout: 5000 });
+    await A.waitForTimeout(1800);
+    await A.getByRole('button', { name: 'Отправить голосовое' }).click();
+    await B.locator('.voice').last().waitFor({ timeout: 10000 });
+  });
+
+  await step('поиск по чату и переход к сообщению', async () => {
+    await B.getByRole('button', { name: 'Поиск по чату' }).click();
+    await B.getByLabel('Искать в чате').fill('армирование');
+    await B.locator('.search-row').first().click({ timeout: 8000 });
+    await B.locator('.msg-flash').waitFor({ timeout: 5000 });
+    await B.screenshot({ path: `${SHOTS}/5-phase1.png` });
+    await B.getByRole('button', { name: 'Закрыть' }).first().click();
+  });
+
   await step('видеозвонок: входящий вызов', async () => {
     await A.getByRole('button', { name: 'Сотрудники' }).click();
     await A.getByRole('button', { name: 'Видеозвонок: Ольга Ким' }).click();

@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useStore, setState, loadMessages, queueRead, toast } from '../store.js';
-import { startCall } from '../calls.js';
-import { chatTitle, formatDay, lastSeenText, peerOf } from '../utils.js';
+import {
+  useStore, setState, loadMessages, loadNewer, queueRead, toast, request, jumpToMessage,
+  cancelScheduled, sendScheduledNow,
+} from '../store.js';
+import { startChatCall } from '../calls.js';
+import { chatTitle, formatDay, lastSeenText, peerOf, formatTime, formatDateTime, statusText } from '../utils.js';
+import { plainText } from '../format.jsx';
 import { ChatAvatar } from './Avatar.jsx';
 import Icon from './Icon.jsx';
 import Message from './Message.jsx';
@@ -15,47 +19,68 @@ export default function ChatView({ chatId }) {
   const [files, setFiles] = useState([]);
   const [dragOver, setDragOver] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [search, setSearch] = useState(false);
+  const [showScheduled, setShowScheduled] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
   const stickToBottom = useRef(true);
   const prevHeight = useRef(0);
+  const restore = useRef(false);
+  const loadingNewer = useRef(false);
   const [, tick] = useState(0);
 
-  // Первая загрузка
   useEffect(() => {
-    loadMessages(chatId).catch((e) => toast(e.message));
-  }, [chatId]);
+    if (!s.messages[chatId] || !s.hasNewer[chatId]) loadMessages(chatId).catch((e) => toast(e.message));
+  }, [chatId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Обновление «печатает…»
   useEffect(() => {
     const t = setInterval(() => tick((x) => x + 1), 1500);
     return () => clearInterval(t);
   }, []);
 
-  // Прокрутка вниз при новых сообщениях, если пользователь внизу; сохранение позиции при подгрузке старых
+  // при переходе к сообщению не прилипать к низу
+  useEffect(() => { if (s.highlight?.chatId === chatId) stickToBottom.current = false; }, [s.highlight, chatId]);
+
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (prevHeight.current && loadingOlder === false && el.dataset.restore === '1') {
+    if (restore.current) {
       el.scrollTop = el.scrollHeight - prevHeight.current;
-      el.dataset.restore = '0';
+      restore.current = false;
     } else if (stickToBottom.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages, loadingOlder]);
+  }, [messages]);
 
   const onScroll = useCallback(async () => {
     const el = scrollRef.current;
     if (!el) return;
-    stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    if (el.scrollTop < 120 && s.hasMore[chatId] && !loadingOlder) {
+    const bottomGap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottom.current = bottomGap < 80 && !s.hasNewer[chatId];
+    setAtBottom(bottomGap < 200);
+    if (el.scrollTop < 150 && s.hasMore[chatId] && !loadingOlder) {
       setLoadingOlder(true);
       prevHeight.current = el.scrollHeight;
-      el.dataset.restore = '1';
-      try { await loadMessages(chatId, true); } catch (e) { toast(e.message); }
+      restore.current = true;
+      try { await loadMessages(chatId, true); } catch (e) { toast(e.message); restore.current = false; }
       setLoadingOlder(false);
     }
-  }, [chatId, s.hasMore, loadingOlder]);
+    if (bottomGap < 150 && s.hasNewer[chatId] && !loadingNewer.current) {
+      loadingNewer.current = true;
+      try { await loadNewer(chatId); } catch (e) { toast(e.message); }
+      loadingNewer.current = false;
+    }
+  }, [chatId, s.hasMore, s.hasNewer, loadingOlder]);
 
-  // Отметка о прочтении: сообщение видно на экране И окно приложения активно
+  async function toLatest() {
+    if (s.hasNewer[chatId]) {
+      try { await loadMessages(chatId); } catch (e) { toast(e.message); return; }
+    }
+    stickToBottom.current = true;
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }
+
+  // Прочтение: сообщение видно на экране И окно приложения активно
   const visible = useRef(new Set());
   const observer = useRef(null);
   const flushVisible = useCallback(() => {
@@ -74,7 +99,6 @@ export default function ChatView({ chatId }) {
       }
       flushVisible();
     }, { root: scrollRef.current, threshold: [0, 0.6, 1] });
-    // сообщения, отрисованные до создания наблюдателя (чат уже был загружен)
     scrollRef.current?.querySelectorAll('[data-observe="1"]').forEach((el) => observer.current.observe(el));
     const onFocus = () => flushVisible();
     window.addEventListener('focus', onFocus);
@@ -95,12 +119,15 @@ export default function ChatView({ chatId }) {
   const peerId = peerOf(chat, meId);
   const peer = s.users[peerId];
   const onlineCount = chat.members.filter((m) => s.users[m.userId]?.online).length;
-  const typingIds = Object.entries(s.typing[chatId] || {}).filter(([, until]) => until > Date.now()).map(([id]) => Number(id));
-  const typingNames = typingIds.map((id) => s.users[id]?.name.split(' ')[0]).filter(Boolean);
+  const typing = Object.entries(s.typing[chatId] || {}).filter(([, t]) => t.until > Date.now());
+  const typingNames = typing.map(([id]) => s.users[Number(id)]?.name.split(' ')[0]).filter(Boolean);
+  const voiceTyping = typing.some(([, t]) => t.kind === 'voice');
+  const scheduled = s.scheduled.filter((x) => x.chatId === chatId);
+  const unreadBelow = chat.unread;
 
   const subtitle = chat.type === 'group'
-    ? `${chat.members.length} ${plural(chat.members.length, 'участник', 'участника', 'участников')}, ${onlineCount} в сети`
-    : [peer?.position, lastSeenText(peer)].filter(Boolean).join(' · ');
+    ? `${chat.address ? chat.address + ' · ' : ''}${chat.members.length} ${plural(chat.members.length, 'участник', 'участника', 'участников')}, ${onlineCount} в сети`
+    : [peer?.position, peer?.status ? statusText(peer) : lastSeenText(peer)].filter(Boolean).join(' · ');
 
   function onDrop(e) {
     e.preventDefault();
@@ -118,19 +145,43 @@ export default function ChatView({ chatId }) {
         <button className="icon-btn chat-back" aria-label="К списку чатов" onClick={() => setState({ activeChatId: null })}><Icon name="back" /></button>
         <ChatAvatar chat={chat} users={s.users} meId={meId} size={40} />
         <button className="chat-head-title" onClick={() => setState({ infoOpen: !s.infoOpen })}>
-          <h2>{chatTitle(chat, s.users, meId)}</h2>
-          <span className={peer?.online && chat.type === 'direct' ? 'online' : ''}>{subtitle}</span>
+          <h2>{chatTitle(chat, s.users, meId)}{chat.muted && <Icon name="bellOff" size={14} style={{ marginLeft: 6, verticalAlign: -2, color: 'var(--muted)' }} />}</h2>
+          <span className={peer?.online && chat.type === 'direct' && !peer?.status ? 'online' : ''}>{subtitle}</span>
         </button>
-        {chat.type === 'direct' && peer?.isActive && (
+        {(chat.type === 'group' || peer?.isActive) && (
           <>
-            <button className="icon-btn" aria-label="Аудиозвонок" title="Аудиозвонок" onClick={() => startCall(peerId, false)}><Icon name="phone" /></button>
-            <button className="icon-btn" aria-label="Видеозвонок" title="Видеозвонок" onClick={() => startCall(peerId, true)}><Icon name="video" /></button>
+            <button className="icon-btn" aria-label={chat.type === 'group' ? 'Аудиосозвон группы' : 'Аудиозвонок'} title="Аудиозвонок" onClick={() => startChatCall(chatId, peerId, false)}><Icon name="phone" /></button>
+            <button className="icon-btn" aria-label={chat.type === 'group' ? 'Видеосозвон группы' : 'Видеозвонок'} title="Видеозвонок" onClick={() => startChatCall(chatId, peerId, true)}><Icon name="video" /></button>
           </>
         )}
+        <button className={'icon-btn' + (search ? ' icon-btn-on' : '')} aria-label="Поиск по чату" title="Поиск по чату" onClick={() => setSearch(!search)}><Icon name="search" /></button>
         <button className={'icon-btn' + (s.infoOpen ? ' icon-btn-on' : '')} aria-label={chat.type === 'group' ? 'Участники и настройки группы' : 'О сотруднике'} title="Информация" onClick={() => setState({ infoOpen: !s.infoOpen })}>
           <Icon name="info" />
         </button>
       </header>
+
+      {search && <SearchBar chatId={chatId} onClose={() => setSearch(false)} />}
+
+      {scheduled.length > 0 && (
+        <div className="sched-bar">
+          <button className="sched-toggle" onClick={() => setShowScheduled(!showScheduled)} aria-expanded={showScheduled}>
+            <Icon name="clock" size={16} />Запланировано: {scheduled.length}<span>· ближайшее {formatDateTime(scheduled[0].sendAt)}</span>
+            <Icon name={showScheduled ? 'chevronUp' : 'chevronDown'} size={14} stroke={2.5} />
+          </button>
+          {showScheduled && (
+            <div className="sched-list">
+              {scheduled.map((x) => (
+                <div key={x.id} className="sched-item">
+                  <span className="sched-when mono">{formatDateTime(x.sendAt)}</span>
+                  <span className="sched-text">{x.important && <strong>Важное · </strong>}{x.silent && 'Без звука · '}{plainText(x.text) || (x.files.length ? `Вложения: ${x.files.length}` : '')}</span>
+                  <button className="link-btn" onClick={() => sendScheduledNow(x.id)}>Отправить сейчас</button>
+                  <button className="icon-btn icon-btn-xs" aria-label="Отменить отправку" onClick={() => cancelScheduled(x.id)}><Icon name="close" size={14} stroke={2.25} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="messages" ref={scrollRef} onScroll={onScroll}>
         {loadingOlder && <div className="loading-older">Загружаем историю…</div>}
@@ -143,8 +194,8 @@ export default function ChatView({ chatId }) {
         {messages?.map((m, i) => {
           const prev = messages[i - 1];
           const newDay = !prev || new Date(prev.createdAt).toDateString() !== new Date(m.createdAt).toDateString();
-          const grouped = !newDay && prev && prev.senderId === m.senderId && prev.kind === 'text' && m.createdAt - prev.createdAt < 5 * 60000;
-          const isLastOwn = m.senderId === meId && !messages.slice(i + 1).some((x) => x.senderId === meId && x.kind === 'text');
+          const grouped = !newDay && prev && prev.senderId === m.senderId && !['system', 'call'].includes(prev.kind) && m.createdAt - prev.createdAt < 5 * 60000;
+          const isLastOwn = m.senderId === meId && !s.hasNewer[chatId] && !messages.slice(i + 1).some((x) => x.senderId === meId && !['system', 'call'].includes(x.kind));
           return (
             <React.Fragment key={m.id}>
               {newDay && <div className="day-sep"><span>{formatDay(m.createdAt)}</span></div>}
@@ -153,14 +204,70 @@ export default function ChatView({ chatId }) {
           );
         })}
         {typingNames.length > 0 && (
-          <div className="typing"><span className="typing-dots"><i /><i /><i /></span>{typingNames.join(', ')} {typingNames.length > 1 ? 'печатают' : 'печатает'}</div>
+          <div className="typing">
+            {voiceTyping ? <Icon name="mic" size={14} /> : <span className="typing-dots"><i /><i /><i /></span>}
+            {typingNames.join(', ')} {voiceTyping ? 'записывает голосовое' : typingNames.length > 1 ? 'печатают' : 'печатает'}
+          </div>
         )}
       </div>
+
+      {(!atBottom || s.hasNewer[chatId]) && (
+        <button className="to-latest" aria-label="К последним сообщениям" onClick={toLatest}>
+          <Icon name="arrowDown" size={20} />
+          {unreadBelow > 0 && <span className="badge">{unreadBelow}</span>}
+        </button>
+      )}
 
       <Composer chatId={chatId} files={files} setFiles={setFiles} disabled={chat.type === 'direct' && peer && !peer.isActive} />
       {dragOver && <div className="drop-hint">Отпустите, чтобы прикрепить файлы</div>}
     </section>
   );
+}
+
+function SearchBar({ chatId, onClose }) {
+  const s = useStore();
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const timer = useRef(null);
+  useEffect(() => {
+    clearTimeout(timer.current);
+    if (q.trim().length < 2) { setResults(null); return undefined; }
+    timer.current = setTimeout(async () => {
+      setBusy(true);
+      try { setResults(await request('GET', `/api/chats/${chatId}/search?q=${encodeURIComponent(q.trim())}`)); } catch (e) { toast(e.message); }
+      setBusy(false);
+    }, 300);
+    return () => clearTimeout(timer.current);
+  }, [q, chatId]);
+  return (
+    <div className="chat-search">
+      <label className="search">
+        <Icon name="search" size={18} />
+        <input autoFocus type="search" aria-label="Искать в чате" placeholder="Искать в этом чате" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }} />
+        {busy && <span className="search-busy">…</span>}
+      </label>
+      <button className="link-btn" onClick={onClose}>Закрыть</button>
+      {results && (
+        <div className="search-results">
+          {!results.length && <div className="popover-empty">Ничего не найдено</div>}
+          {results.map((r) => (
+            <button key={r.id} className="search-row" onClick={() => jumpToMessage(chatId, r.id)}>
+              <span className="search-meta"><strong>{s.users[r.senderId]?.name ?? 'Сотрудник'}</strong> · {formatDay(r.createdAt).toLowerCase()} в {formatTime(r.createdAt)}</span>
+              <span className="search-text">{highlight(plainText(r.text), q.trim())}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function highlight(text, q) {
+  const i = text.toLowerCase().indexOf(q.toLowerCase());
+  if (i < 0) return text;
+  const start = Math.max(0, i - 40);
+  return (<>{start ? '…' : ''}{text.slice(start, i)}<mark>{text.slice(i, i + q.length)}</mark>{text.slice(i + q.length, i + q.length + 120)}</>);
 }
 
 export function plural(n, one, few, many) {

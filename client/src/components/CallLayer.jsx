@@ -41,10 +41,13 @@ export default function CallLayer() {
           </div>
         </div>
         <div className="incoming-actions">
-          <button className="pill-btn pill-red" onClick={rejectCall}><Icon name="hangup" size={18} stroke={2} />Отклонить</button>
+          <button className="pill-btn pill-red" onClick={() => rejectCall()}><Icon name="hangup" size={18} stroke={2} />Отклонить</button>
           <button className="pill-btn pill-green" onClick={() => acceptCall(false)}><Icon name="phone" size={18} stroke={2} />Ответить</button>
         </div>
-        {call.video && <button className="pill-btn pill-dark" onClick={() => acceptCall(true)}><Icon name="video" size={18} />Ответить с видео</button>}
+        <div className="incoming-actions">
+          <button className="pill-btn pill-dark" onClick={() => acceptCall(true)}><Icon name="video" size={18} />Ответить с видео</button>
+          <button className="pill-btn pill-dark" onClick={() => rejectCall('later', 10)}><Icon name="clock" size={18} />Перезвоню через 10 мин</button>
+        </div>
       </div>
     );
   }
