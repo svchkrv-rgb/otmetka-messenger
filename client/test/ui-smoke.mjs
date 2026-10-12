@@ -88,7 +88,7 @@ function summary() {
   });
 
   await step('отправка сообщения по Enter', async () => {
-    const box = A.getByLabel('Сообщение');
+    const box = A.getByRole('textbox', { name: 'Сообщение', exact: true });
     await box.fill(text);
     await box.press('Enter');
     await A.locator('.bubble-mine', { hasText: text }).waitFor({ timeout: 8000 });
@@ -122,13 +122,13 @@ function summary() {
   });
 
   await step('индикатор «печатает…»', async () => {
-    await B.getByLabel('Сообщение').pressSequentially('Еду', { delay: 50 });
+    await B.getByRole('textbox', { name: 'Сообщение', exact: true }).pressSequentially('Еду', { delay: 50 });
     await A.locator('.typing', { hasText: 'Ольга печатает' }).waitFor({ timeout: 5000 });
   });
 
   // ---------- Этап 1 ----------
   await step('ответ с цитатой и @упоминанием', async () => {
-    const box = B.getByLabel('Сообщение');
+    const box = B.getByRole('textbox', { name: 'Сообщение', exact: true });
     await box.fill('');
     await B.locator('.msg-row', { hasText: text }).hover();
     await B.locator('.msg-row', { hasText: text }).getByRole('button', { name: 'Ответить' }).click();
@@ -144,7 +144,7 @@ function summary() {
   });
 
   await step('«Важное» с подтверждением прочтения', async () => {
-    const box = A.getByLabel('Сообщение');
+    const box = A.getByRole('textbox', { name: 'Сообщение', exact: true });
     await box.click();
     await A.locator('.format-bar').getByRole('button', { name: 'Важное — с подтверждением прочтения' }).click();
     await box.fill('Приёмка переносится на понедельник');
@@ -165,7 +165,7 @@ function summary() {
   });
 
   await step('задача через команду /задача и отметка «выполнено»', async () => {
-    const box = B.getByLabel('Сообщение');
+    const box = B.getByRole('textbox', { name: 'Сообщение', exact: true });
     await box.fill('/зад');
     await B.locator('.suggest-row', { hasText: '/задача' }).waitFor({ timeout: 3000 });
     await box.press('Enter');
@@ -182,7 +182,7 @@ function summary() {
   });
 
   await step('правка последнего сообщения по стрелке вверх', async () => {
-    const box = A.getByLabel('Сообщение');
+    const box = A.getByRole('textbox', { name: 'Сообщение', exact: true });
     await box.fill('Черновик сообщения');
     await box.press('Enter');
     await A.locator('.bubble-mine', { hasText: 'Черновик сообщения' }).waitFor({ timeout: 5000 });
@@ -195,7 +195,7 @@ function summary() {
   });
 
   await step('голосовое сообщение', async () => {
-    await A.getByLabel('Сообщение').fill('');
+    await A.getByRole('textbox', { name: 'Сообщение', exact: true }).fill('');
     await A.getByRole('button', { name: 'Записать голосовое' }).click();
     await A.locator('.voice-rec').waitFor({ timeout: 5000 });
     await A.waitForTimeout(1800);
